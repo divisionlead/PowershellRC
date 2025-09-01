@@ -1,0 +1,251 @@
+function Write-Green {
+    param([string]$Message)
+    Write-Host $Message -ForegroundColor Green
+}
+function Write-Red {
+    param([string]$Message)
+    Write-Host $Message -ForegroundColor Red
+}
+function Write-Yellow {
+    param([string]$Message)
+    Write-Host $Message -ForegroundColor Yellow
+}
+
+function Check-Admin {
+    $currentUser  = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($currentUser )
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)) {
+        Write-Red "This script must be run as Administrator. Please restart PowerShell with elevated privileges."
+        exit 1
+    }
+}
+
+function Get-CoreIsolationStatus {
+    $regPath = "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard"
+    $valueName = "EnableVirtualizationBasedSecurity"
+    $vbsEnabled = Get-ItemProperty -Path $regPath -Name $valueName -ErrorAction SilentlyContinue
+
+    if ($null -eq $vbsEnabled) {
+        Write-Yellow "Core Isolation (Virtualization Based Security) status: Not configured or not supported."
+        return
+    }
+
+    if ($vbsEnabled.$valueName -eq 1) {
+        Write-Green "Core Isolation (Virtualization Based Security) is ENABLED."
+    } else {
+        Write-Red "Core Isolation (Virtualization Based Security) is DISABLED."
+    }
+}
+
+function Get-MemoryIntegrityStatus {
+    $regPath = "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity"
+    $valueName = "Enabled"
+    $memIntegrity = Get-ItemProperty -Path $regPath -Name $valueName -ErrorAction SilentlyContinue
+
+    if ($null -eq $memIntegrity) {
+        Write-Yellow "Memory Integrity status: Not configured or not supported."
+        return
+    }
+
+    if ($memIntegrity.$valueName -eq 1) {
+        Write-Green "Memory Integrity is ENABLED."
+    } else {
+        Write-Red "Memory Integrity is DISABLED."
+    }
+}
+
+function Check-ModuleSignature {
+    param([string]$ModuleName)
+
+    try {
+        $module = Get-Module -ListAvailable -Name $ModuleName | Select-Object -First 1
+        if (-not $module) {
+            Write-Yellow "Module '$ModuleName' not found."
+            return
+        }
+
+        $modulePath = $module.Path
+        if (-not $modulePath) {
+            Write-Yellow "Module '$ModuleName' path not found."
+            return
+        }
+
+        $signature = Get-AuthenticodeSignature -FilePath $modulePath
+        switch ($signature.Status) {
+            'Valid' { Write-Green "Module '$ModuleName' signature is VALID." }
+            'NotSigned' { Write-Red "Module '$ModuleName' is NOT SIGNED." }
+            'UnknownError' { Write-Red "Module '$ModuleName' signature status UNKNOWN ERROR." }
+            'HashMismatch' { Write-Red "Module '$ModuleName' signature HASH MISMATCH." }
+            'NotTrusted' { Write-Red "Module '$ModuleName' signature is NOT TRUSTED." }
+            default { Write-Yellow "Module '$ModuleName' signature status: $($signature.Status)" }
+        }
+    } catch {
+        Write-Red "Error checking signature for module '$ModuleName': $_"
+    }
+}
+
+function Get-DefenderExclusions {
+    try {
+        $exclusions = Get-MpPreference | Select-Object -ExpandProperty ExclusionPath
+        if ($exclusions) {
+            Write-Host "Windows Defender Exclusion Paths:"
+            $exclusions | ForEach-Object { Write-Host " - $_" }
+        } else {
+            Write-Yellow "No Windows Defender exclusion paths configured."
+        }
+    } catch {
+        Write-Red "Error retrieving Windows Defender exclusions: $_"
+    }
+}
+
+function Get-DefenderRealtimeProtectionStatus {
+    try {
+        $status = Get-MpPreference | Select-Object -ExpandProperty DisableRealtimeMonitoring
+        if ($status -eq $true) {
+            Write-Red "Windows Defender Real-time Protection is DISABLED."
+        } else {
+            Write-Green "Windows Defender Real-time Protection is ENABLED."
+        }
+    } catch {
+        Write-Red "Error retrieving Windows Defender real-time protection status: $_"
+    }
+}
+
+function Get-USBDevices {
+    Write-Host "=== Connected USB Drives ==="
+    try {
+        $usbDevices = Get-PnpDevice -Class USB -Status OK | Select-Object FriendlyName, InstanceId
+        if ($usbDevices) {
+            $usbDevices | ForEach-Object { Write-Host " - $($_.FriendlyName)" }
+        } else {
+            Write-Green "Not found"
+        }
+    } catch {
+        Write-Red "Error getting USB devices: $_"
+    }
+    Write-Host ""
+}
+
+function Get-DVDDrives {
+    Write-Host "=== DVD Drives ==="
+    try {
+        $dvdDrives = Get-CimInstance -ClassName Win32_CDROMDrive | Select-Object Name, Drive
+        if ($dvdDrives) {
+            $dvdDrives | ForEach-Object { Write-Host " - $($_.Name) ($($_.Drive))" }
+        } else {
+            Write-Green "DVD drives not found"
+        }
+    } catch {
+        Write-Red "Error getting DVD drives: $_"
+    }
+    Write-Host ""
+}
+
+function Get-SATADrives {
+    Write-Host "=== SATA Drives ==="
+    try {
+        $disks = Get-CimInstance -ClassName Win32_DiskDrive | Where-Object { $_.InterfaceType -eq "IDE" -or $_.InterfaceType -eq "SATA" } | Select-Object Model, SerialNumber, InterfaceType
+        if ($disks) {
+            $disks | ForEach-Object { Write-Host " - $($_.Model) (Serial: $($_.SerialNumber), Interface: $($_.InterfaceType))" }
+        } else {
+            Write-Green"SATA/IDE drives not found."
+        }
+    } catch {
+        Write-Red "SATA error: $_"
+    }
+    Write-Host ""
+}
+
+function Get-ProcessorInfo {
+    Write-Host "=== CPU ==="
+    try {
+        $cpu = Get-CimInstance -ClassName Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors, MaxClockSpeed
+        if ($cpu) {
+            foreach ($c in $cpu) {
+                Write-Host " - $($c.Name)"
+                Write-Host "   Cores: $($c.NumberOfCores), Logical processors: $($c.NumberOfLogicalProcessors), Frequency: $($c.MaxClockSpeed) MHz"
+            }
+        } else {
+            Write-Yellow "CPU not found"
+        }
+    } catch {
+        Write-Red "Error getting processor information: $_"
+    }
+    Write-Host ""
+}
+
+function Get-GPUInfo {
+    Write-Host "=== GPU ==="
+    try {
+        $gpus = Get-CimInstance -ClassName Win32_VideoController | Select-Object Name, DriverVersion, VideoProcessor
+        if ($gpus) {
+            $gpus | ForEach-Object {
+                Write-Host " - $($_.Name)"
+                Write-Host "   Video processor: $($_.VideoProcessor), Driver version: $($_.DriverVersion)"
+            }
+        } else {
+            Write-Yellow "GPU not found."
+        }
+    } catch {
+        Write-Red "Error getting GPU information: $_"
+    }
+    Write-Host ""
+}
+
+function Get-NetworkAdapters {
+    Write-Host "=== Network Adapters ==="
+    try {
+        $adapters = Get-CimInstance -ClassName Win32_NetworkAdapter | Where-Object { $_.NetEnabled -eq $true } | Select-Object Name, MACAddress, Speed
+        if ($adapters) {
+            $adapters | ForEach-Object {
+                $speedMbps = if ($_.Speed) { [math]::Round($_.Speed / 1MB, 2) } else { "Unknown" }
+                Write-Host " - $($_.Name)"
+                Write-Host "   MAC Address: $($_.MACAddress), Speed: $speedMbps Mbps"
+            }
+        } else {
+            Write-Yellow "No active network adapters found."
+        }
+    } catch {
+        Write-Red "Error getting network adapters information: $_"
+    }
+    Write-Host ""
+}
+
+Check-Admin
+
+Write-Host "=== Checking Core Isolation (Virtualization Based Security) ==="
+Get-CoreIsolationStatus
+Write-Host ""
+
+Write-Host "=== Checking Memory Integrity ==="
+Get-MemoryIntegrityStatus
+Write-Host ""
+
+$modulesToCheck = @(
+    'Microsoft.PowerShell.Operation.Validation',
+    'PackageManagement',
+    'Pester',
+    'PowerShellGet',
+    'PSReadline'
+)
+
+Write-Host "=== Checking Module Signatures ==="
+foreach ($mod in $modulesToCheck) {
+    Check-ModuleSignature -ModuleName $mod
+}
+Write-Host ""
+
+Write-Host "=== Checking Windows Defender Exclusion Paths ==="
+Get-DefenderExclusions
+Write-Host ""
+
+Write-Host "=== Checking Windows Defender Real-time Protection Status ==="
+Get-DefenderRealtimeProtectionStatus
+Write-Host ""
+
+Get-USBDevices
+Get-DVDDrives
+Get-SATADrives
+Get-ProcessorInfo
+Get-GPUInfo
+Get-NetworkAdapters
