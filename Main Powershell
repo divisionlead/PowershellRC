@@ -26,7 +26,7 @@ function Get-CoreIsolationStatus {
     $vbsEnabled = Get-ItemProperty -Path $regPath -Name $valueName -ErrorAction SilentlyContinue
 
     if ($null -eq $vbsEnabled) {
-        Write-Yellow "Core Isolation (Virtualization Based Security) status: Not configured or not supported."
+        Write-Red "Core Isolation (Virtualization Based Security) is DISABLED."
         return
     }
 
@@ -43,7 +43,7 @@ function Get-MemoryIntegrityStatus {
     $memIntegrity = Get-ItemProperty -Path $regPath -Name $valueName -ErrorAction SilentlyContinue
 
     if ($null -eq $memIntegrity) {
-        Write-Yellow "Memory Integrity status: Not configured or not supported."
+        Write-Red "Memory Integrity is DISABLED."
         return
     }
 
@@ -141,20 +141,6 @@ function Get-DVDDrives {
     Write-Host ""
 }
 
-function Get-SATADrives {
-    Write-Host "=== SATA Drives ==="
-    try {
-        $disks = Get-CimInstance -ClassName Win32_DiskDrive | Where-Object { $_.InterfaceType -eq "IDE" -or $_.InterfaceType -eq "SATA" } | Select-Object Model, SerialNumber, InterfaceType
-        if ($disks) {
-            $disks | ForEach-Object { Write-Host " - $($_.Model) (Serial: $($_.SerialNumber), Interface: $($_.InterfaceType))" }
-        } else {
-            Write-Green"SATA/IDE drives not found."
-        }
-    } catch {
-        Write-Red "SATA error: $_"
-    }
-    Write-Host ""
-}
 
 function Get-ProcessorInfo {
     Write-Host "=== CPU ==="
